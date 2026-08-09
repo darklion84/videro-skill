@@ -28,9 +28,15 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import speakers        # noqa: E402
 
 RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
+
+
+def _speakers():
+    """Импорт отложенный: в раздаваемом коллегам архиве нет ни requests, ни venv,
+    а статика с Range должна работать на голом системном Python."""
+    import speakers
+    return speakers
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -76,8 +82,8 @@ class Handler(SimpleHTTPRequestHandler):
         if urlparse(self.path).path == "/api/speakers":
             src = self._utf8((parse_qs(urlparse(self.path).query).get("src") or [""])[0])
             try:
-                return self._json(speakers.make_roster(str(self._timeline(src))))
-            except (ValueError, OSError) as e:
+                return self._json(_speakers().make_roster(str(self._timeline(src))))
+            except (ValueError, OSError, ImportError) as e:
                 return self._json({"error": str(e)}, 400)
         return super().do_GET()
 
@@ -93,11 +99,12 @@ class Handler(SimpleHTTPRequestHandler):
             names = req.get("names") or {}
             if not isinstance(names, dict):
                 raise ValueError("names должен быть объектом {SPEAKER_XX: имя}")
-            speakers.save_names(tl, {str(k): str(v) for k, v in names.items()})
-            res = speakers.apply_names(tl, srt_names=bool(req.get("srt_names", True)))
-            res["roster"] = speakers.make_roster(tl)
+            sp = _speakers()
+            sp.save_names(tl, {str(k): str(v) for k, v in names.items()})
+            res = sp.apply_names(tl, srt_names=bool(req.get("srt_names", True)))
+            res["roster"] = sp.make_roster(tl)
             return self._json(res)
-        except (ValueError, OSError, json.JSONDecodeError) as e:
+        except (ValueError, OSError, json.JSONDecodeError, ImportError) as e:
             return self._json({"error": str(e)}, 400)
 
     # ── Range: без него не перематывается большое видео ──────────────────────
@@ -169,12 +176,22 @@ class _Slice:
 def main():
     ap = argparse.ArgumentParser(description="сервер плеера videro")
     ap.add_argument("root", help="каталог раздачи (корень репозитория)")
-    ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--port", type=int, default=8000,
+                    help="0 — занять любой свободный")
+    ap.add_argument("--open", default=None, metavar="PATH",
+                    help="открыть этот путь в браузере после старта")
     args = ap.parse_args()
 
     handler = partial(Handler, directory=os.path.abspath(args.root))
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), handler)
     srv.daemon_threads = True
+    port = srv.server_address[1]
+    url = f"http://localhost:{port}{args.open or '/'}"
+    print(f"плеер: {url}\nCtrl+C чтобы остановить", flush=True)
+    if args.open:
+        import threading
+        import webbrowser
+        threading.Timer(0.7, lambda: webbrowser.open(url)).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

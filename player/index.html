@@ -469,8 +469,9 @@
            <code>video.mp4</code> (годится симлинк) или прогони транскод без <code>--no-hls</code>.`);
     }
 
-    // кнопка нужна только когда диаризация уже прошла
-    if (transcript.some(s => s.speaker)) {
+    // кнопка нужна, только когда диаризация прошла и рядом есть чем сохранять:
+    // в розданном коллегам архиве сервер отдаёт статику, но API там нет
+    if (transcript.some(s => s.speaker) && !meta.viewonly) {
       $("nameBtn").hidden = false;
       $("nameBtn").onclick = openSpeakers;
       $("spkSave").onclick = saveSpeakers;

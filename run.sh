@@ -29,6 +29,7 @@ case "${1:-}" in
   redact)              script=redact.py; shift ;;
   normalize)           script=normalize.py; shift ;;
   all)                 script=pipeline.py; shift ;;
+  package)             script=package.py; shift ;;
 esac
 
 if [ "$script" = videro.py ] && [ -z "${SPEECHCORE_TOKEN:-}" ]; then
