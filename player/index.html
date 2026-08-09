@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Videro — плеер</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%2335d07f'/><path d='M6 4.5l6 3.5-6 3.5z' fill='%230a0e0d'/></svg>">
+<style>
+  :root{
+    --bg:#0a0e0d; --panel:#111917; --panel2:#16211e; --line:#1f2d29;
+    --text:#e7efec; --muted:#8ba098; --accent:#35d07f; --accent-dim:#1c3b2e;
+    --hl:#f5a524; --radius:10px;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .wrap{max-width:1400px; margin:0 auto; padding:24px 20px 48px}
+
+  header h1{margin:0 0 6px; font-size:26px; line-height:1.25}
+  header p{margin:0 0 14px; color:var(--muted); max-width:70ch}
+  .chips{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px}
+  .chip{
+    border:1px solid var(--line); border-radius:999px; padding:5px 13px;
+    font-size:13px; color:var(--muted); background:var(--panel);
+  }
+  .chip b{color:var(--text); font-weight:600}
+  .chip.hl{border-color:#4a3a17; color:var(--hl); background:#1d1708}
+
+  .grid{display:grid; grid-template-columns:minmax(0,1fr) 420px; gap:20px; align-items:start}
+  /* видео остаётся на экране, пока листаешь длинный транскрипт */
+  .grid > section{position:sticky; top:20px}
+  @media (max-width:1080px){
+    .grid{grid-template-columns:minmax(0,1fr)}
+    .grid > section{position:static}
+  }
+
+  video{width:100%; display:block; background:#000; border-radius:var(--radius)}
+
+  /* полоса сцен: каждая сцена — столбик, хайлайты янтарные */
+  .strip{position:relative; height:46px; margin-top:10px; background:var(--panel);
+         border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; cursor:pointer}
+  .bar{position:absolute; bottom:0; background:var(--accent-dim); transition:background .15s}
+  .bar.is-hl{background:var(--hl)}
+  .bar:hover{background:var(--accent)}
+  .playhead{position:absolute; top:0; bottom:0; width:2px; background:var(--text); pointer-events:none}
+  .striplegend{display:flex; justify-content:space-between; gap:12px; margin-top:8px;
+               font-size:13px; color:var(--muted)}
+  .striplegend .dot{display:inline-block; width:8px; height:8px; border-radius:2px;
+                    background:var(--hl); margin-right:6px; vertical-align:middle}
+
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:14px 16px}
+  .now-head{display:flex; justify-content:space-between; align-items:center; gap:10px;
+            font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--accent)}
+  .now-head .t{color:var(--muted); letter-spacing:0}
+  .badge{display:inline-block; margin:10px 0 8px; padding:2px 9px; font-size:12px;
+         border:1px solid var(--line); border-radius:6px; color:var(--muted); background:var(--panel2)}
+  .now h2{margin:0 0 6px; font-size:17px; line-height:1.35}
+  .now p{margin:0; color:var(--muted); font-size:14px}
+
+  .ctlrow{display:flex; align-items:center; justify-content:space-between; gap:10px; margin:12px 0}
+  .ctlrow .sync{margin:0}
+  .btn{padding:6px 12px; font:inherit; font-size:13px; color:var(--accent); cursor:pointer;
+       background:var(--panel); border:1px solid var(--line); border-radius:7px}
+  .btn:hover{border-color:var(--accent)}
+  .btn[disabled]{opacity:.5; cursor:default}
+  .btn.primary{background:var(--accent); border-color:var(--accent); color:#06120c; font-weight:600}
+
+  /* прижата к правому краю и почти без затемнения: видео слева должно остаться
+     читаемым — по картинке часто и опознаётся говорящий */
+  .modal{position:fixed; inset:0; background:#0003; display:flex; align-items:center;
+         justify-content:flex-end; padding:20px; z-index:10}
+  .modal[hidden]{display:none}
+  /* 460px — ширина правой колонки макета (420) плюс отступ: шире лист начнёт наезжать
+     на видео, ради видимости которого его сюда и сдвинули */
+  .sheet{width:min(460px,100%); max-height:92vh; display:flex; flex-direction:column;
+         background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+         padding:16px 18px; box-shadow:0 18px 50px #000c}
+  .sheet-head{display:flex; align-items:center; gap:10px; margin-bottom:4px}
+  .sheet-head h3{margin:0; margin-right:auto}
+  .sheet-head .now{font-size:13px; color:var(--muted)}
+  #spkList{overflow-y:auto; margin:0 -4px; padding:0 4px}
+  @media (max-width:1080px){ .modal{justify-content:center} }
+  .sheet h3{margin:0 0 4px; font-size:18px}
+  .sheet .hint{margin:0 0 16px; color:var(--muted); font-size:13px}
+  .spk{border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin-bottom:10px;
+       background:var(--panel2)}
+  .spk-top{display:flex; align-items:center; gap:10px; margin-bottom:8px}
+  .spk-top .id{font-size:13px; color:var(--muted)}
+  .spk-top .stat{margin-left:auto; font-size:12px; color:var(--muted)}
+  .spk input{flex:1; min-width:0; padding:6px 10px; font:inherit; font-size:14px; color:var(--text);
+             background:var(--bg); border:1px solid var(--line); border-radius:6px}
+  .spk input:focus{outline:none; border-color:var(--accent)}
+  .smp{display:flex; gap:9px; align-items:baseline; margin-top:6px; font-size:13px; color:var(--muted)}
+  .smp button{flex:none; font:inherit; font-size:12px; color:var(--accent); background:var(--accent-dim);
+              border:0; border-radius:5px; padding:2px 7px; cursor:pointer}
+  .sheet-foot{display:flex; align-items:center; gap:10px; margin-top:16px}
+  .sheet-foot .msg{font-size:13px; color:var(--muted); margin-right:auto}
+  .sheet-foot .msg.err{color:#ff8c8c}
+
+  .sync{display:flex; align-items:center; gap:10px; font-size:14px; color:var(--muted); cursor:pointer}
+  .sync input{appearance:none; width:38px; height:22px; border-radius:999px; background:var(--line);
+              position:relative; cursor:pointer; transition:background .15s; margin:0}
+  .sync input:checked{background:var(--accent)}
+  .sync input::after{content:""; position:absolute; top:3px; left:3px; width:16px; height:16px;
+                     border-radius:50%; background:#fff; transition:transform .15s}
+  .sync input:checked::after{transform:translateX(16px)}
+
+  .tabs{display:flex; gap:4px; padding:4px; background:var(--panel); border:1px solid var(--line);
+        border-radius:var(--radius); margin-bottom:10px}
+  .tabs button{flex:1; padding:8px 6px; font-size:14px; color:var(--muted); background:none;
+               border:0; border-radius:7px; cursor:pointer; font-family:inherit}
+  .tabs button[aria-selected="true"]{background:var(--accent-dim); color:var(--accent); font-weight:600}
+
+  .list{max-height:min(62vh,760px); overflow-y:auto; background:var(--panel);
+        border:1px solid var(--line); border-radius:var(--radius)}
+  .list::-webkit-scrollbar{width:9px}
+  .list::-webkit-scrollbar-thumb{background:var(--line); border-radius:9px}
+  .row{display:flex; gap:11px; padding:11px 13px; border-bottom:1px solid var(--line);
+       cursor:pointer; border-left:3px solid transparent}
+  .row:last-child{border-bottom:0}
+  .row:hover{background:var(--panel2)}
+  .row.active{background:var(--panel2); border-left-color:var(--accent)}
+  .ts{flex:none; font-size:12px; color:var(--accent); background:var(--accent-dim);
+      border-radius:5px; padding:2px 7px; height:fit-content}
+  .row.active .ts{background:var(--accent); color:#06120c; font-weight:600}
+  /* токен или ссылка без пробелов не должны распирать колонку в горизонтальный скролл */
+  .row{overflow-wrap:anywhere}
+  .row .ttl{font-weight:600; font-size:14px; margin-bottom:2px}
+  .row .sub{color:var(--muted); font-size:13px}
+  .who{display:inline-block; margin-bottom:3px; padding:1px 7px; font-size:11px;
+       border-radius:4px; background:var(--accent-dim); color:var(--accent)}
+  .row.seg{padding:8px 13px}
+  .row.seg .sub{color:var(--text); font-size:14px}
+  .row.seg.active .sub{color:var(--accent)}
+
+  .empty{padding:26px 16px; color:var(--muted); text-align:center; font-size:14px}
+  .fatal{margin:40px auto; max-width:640px; padding:20px; border:1px solid #5c2b2b;
+         background:#1c1010; border-radius:var(--radius)}
+  .fatal code{color:var(--hl)}
+</style>
+</head>
+<body>
+<div class="wrap" id="app" hidden>
+  <header>
+    <h1 id="title">—</h1>
+    <p id="desc"></p>
+    <div class="chips" id="chips"></div>
+  </header>
+
+  <div class="grid">
+    <section>
+      <video id="v" controls playsinline preload="metadata"></video>
+      <div class="strip" id="strip"><div class="playhead" id="playhead"></div></div>
+      <div class="striplegend">
+        <span id="stripnow"></span>
+        <span><i class="dot"></i>хайлайт · клик по полосе — перемотка</span>
+      </div>
+    </section>
+
+    <aside>
+      <div class="card now">
+        <div class="now-head"><span>● сейчас в кадре</span><span class="t mono" id="nowTime"></span></div>
+        <span class="badge" id="nowType"></span>
+        <h2 id="nowCap">—</h2>
+        <p id="nowAct"></p>
+      </div>
+
+      <div class="ctlrow">
+        <label class="sync"><input type="checkbox" id="sync" checked> Синхронизация с видео</label>
+        <button class="btn" id="nameBtn" hidden>Назвать спикеров</button>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="chapters" aria-selected="true">Главы</button>
+        <button role="tab" data-tab="highlights" aria-selected="false">Хайлайты</button>
+        <button role="tab" data-tab="transcript" aria-selected="false">Транскрипт</button>
+      </div>
+      <div class="list" id="list"></div>
+    </aside>
+  </div>
+</div>
+<div class="wrap" id="fatal" hidden><div class="fatal"></div></div>
+
+<div class="modal" id="modal" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <h3>Кто говорит</h3>
+      <span class="now mono" id="spkTime">0:00</span>
+      <button class="btn" id="spkPlay" title="пробел — пауза">⏸</button>
+    </div>
+    <p class="hint">Нажми таймкод — видео перемотается туда и пойдёт с этого места.
+       Пауза здесь же, окно закрывать не нужно. Впиши имя и сохрани:
+       оно уйдёт в транскрипт и субтитры. Пустое поле оставляет метку как есть.</p>
+    <div id="spkList"></div>
+    <div class="sheet-foot">
+      <span class="msg" id="spkMsg"></span>
+      <button class="btn" id="spkCancel">Закрыть</button>
+      <button class="btn primary" id="spkSave">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<script src="./hls.min.js"></script>
+<script>
+(() => {
+  const qs = new URLSearchParams(location.search);
+  const src = (qs.get("src") || ".").replace(/\/?$/, "/");
+  const $ = id => document.getElementById(id);
+  const video = $("v");
+
+  const fmt = s => {
+    s = Math.max(0, Math.floor(s));
+    const h = (s / 3600) | 0, m = ((s % 3600) / 60) | 0, x = s % 60;
+    const p = n => String(n).padStart(2, "0");
+    return h ? `${h}:${p(m)}:${p(x)}` : `${m}:${p(x)}`;
+  };
+  const die = html => { $("fatal").hidden = false; $("fatal").firstElementChild.innerHTML = html; };
+
+  const get = async (path, kind = "json") => {
+    const r = await fetch(src + path);
+    if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
+    return kind === "json" ? r.json() : r.text();
+  };
+
+  // SRT → VTT прямо в браузере: <track> понимает только VTT, а пайплайн отдаёт SRT.
+  const srtToVtt = srt =>
+    "WEBVTT\n\n" + srt.replace(/\r/g, "")
+      .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2");
+
+  let tl, scenes = [], chapters = [], highlights = [], transcript = [];
+  let tab = "chapters", rows = [], lastIdx = -1;
+
+  const findIdx = (arr, t) => {
+    for (let i = arr.length - 1; i >= 0; i--) if (t >= arr[i].start) return i;
+    return arr.length ? 0 : -1;
+  };
+
+  function renderChips() {
+    const c = [];
+    c.push(`<span class="chip mono">${fmt(tl.duration_sec)}</span>`);
+    c.push(`<span class="chip"><b>${chapters.length}</b> глав</span>`);
+    if (highlights.length) c.push(`<span class="chip hl"><b>${highlights.length}</b> хайлайтов</span>`);
+    c.push(`<span class="chip"><b>${scenes.length}</b> сцен</span>`);
+    if (transcript.length) c.push(`<span class="chip"><b>${transcript.length}</b> реплик</span>`);
+    c.push(`<span class="chip">${tl.model || ""}</span>`);
+    $("chips").innerHTML = c.join("");
+  }
+
+  function renderStrip() {
+    const d = tl.duration_sec || 1, strip = $("strip");
+    const frag = document.createDocumentFragment();
+    for (const s of scenes) {
+      const b = document.createElement("div");
+      b.className = "bar" + (s.highlight ? " is-hl" : "");
+      b.style.left = (s.start / d * 100) + "%";
+      b.style.width = Math.max(0.4, (s.end - s.start) / d * 100) + "%";
+      b.style.height = (28 + (s.importance || 0) * 3.5) + "%";
+      b.title = `${fmt(s.start)} — ${s.caption || ""}`;
+      frag.appendChild(b);
+    }
+    strip.insertBefore(frag, $("playhead"));
+    strip.addEventListener("click", e => {
+      const r = strip.getBoundingClientRect();
+      video.currentTime = (e.clientX - r.left) / r.width * d;
+    });
+  }
+
+  const DATA = {
+    chapters: () => chapters.map(c => ({
+      start: c.start, ts: fmt(c.start), ttl: c.title, sub: c.summary })),
+    highlights: () => highlights.map(h => ({
+      start: h.start, ts: fmt(h.start), ttl: h.caption, sub: h.reason })),
+    transcript: () => transcript.map(s => ({
+      start: s.start, ts: fmt(s.start), sub: s.text, seg: true,
+      who: s.speaker_name || s.speaker || "" })),
+  };
+
+  function renderList() {
+    const items = DATA[tab]();
+    const box = $("list");
+    if (!items.length) {
+      box.innerHTML = `<div class="empty">${
+        tab === "transcript"
+          ? "Транскрипта нет — прогон был без ASR.<br>Субтитры и реплики появятся после прогона с распознаванием речи."
+          : "Пусто."}</div>`;
+      rows = []; return;
+    }
+    box.innerHTML = items.map(it => `
+      <div class="row${it.seg ? " seg" : ""}" data-t="${it.start}">
+        <span class="ts mono">${it.ts}</span>
+        <span style="min-width:0">
+          ${it.ttl ? `<div class="ttl">${esc(it.ttl)}</div>` : ""}
+          ${it.who ? `<span class="who">${esc(it.who)}</span>` : ""}
+          ${it.sub ? `<div class="sub">${esc(it.sub)}</div>` : ""}
+        </span>
+      </div>`).join("");
+    rows = [...box.children];
+    box.onclick = e => {
+      const row = e.target.closest(".row");
+      if (row) video.currentTime = +row.dataset.t;
+    };
+    lastIdx = -1;
+    onTime();
+  }
+
+  const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+  function onTime() {
+    const t = video.currentTime, d = tl.duration_sec || 1;
+    $("playhead").style.left = (t / d * 100) + "%";
+
+    const s = scenes[findIdx(scenes, t)];
+    if (s) {
+      $("nowTime").textContent = `${fmt(s.start)}–${fmt(s.end)}`;
+      $("nowType").textContent = s.screen_type || "—";
+      $("nowCap").textContent = s.caption || "—";
+      $("nowAct").textContent = s.action || "";
+    }
+    const ch = chapters[findIdx(chapters, t)];
+    $("stripnow").textContent = ch ? `▸ ${ch.title}` : "";
+    if (!$("modal").hidden) $("spkTime").textContent = fmt(t);
+
+    const arr = DATA[tab]();
+    const i = findIdx(arr, t);
+    if (i !== lastIdx && rows.length) {
+      rows[lastIdx]?.classList.remove("active");
+      rows[i]?.classList.add("active");
+      if ($("sync").checked) rows[i]?.scrollIntoView({ block: "nearest" });
+      lastIdx = i;
+    }
+  }
+
+  // ── «Назвать спикеров»: реестр с сервера, правка имён, накат ──────────────
+  const msg = (t, err) => {
+    const el = $("spkMsg");
+    el.textContent = t; el.className = "msg" + (err ? " err" : "");
+  };
+
+  function renderSpeakers(roster) {
+    const list = roster.speakers || [];
+    if (!list.length) { $("spkList").innerHTML = `<div class="empty">Спикеры не размечены.</div>`; return; }
+    $("spkList").innerHTML = list.map(s => `
+      <div class="spk">
+        <div class="spk-top">
+          <span class="id mono">${esc(s.id)}</span>
+          <input data-id="${esc(s.id)}" value="${esc(s.name || "")}" placeholder="имя — например, Лектор">
+          <span class="stat">${(s.talk_sec / 60).toFixed(1)} мин · ${(s.share * 100).toFixed(0)}% · ${s.turns} реплик</span>
+        </div>
+        ${(s.samples || []).map(m => `
+          <div class="smp"><button data-at="${m.at}" class="mono">${esc(m.ts)}</button>
+            <span>${esc(m.text)}</span></div>`).join("")}
+      </div>`).join("");
+    $("spkList").onclick = e => {
+      const b = e.target.closest("button[data-at]");
+      if (b) { video.currentTime = +b.dataset.at; video.play?.().catch(() => {}); }
+    };
+    if (roster.segments_without_speaker)
+      msg(`${roster.segments_without_speaker} реплик без спикера — речь вне интервалов диаризации`);
+  }
+
+  async function openSpeakers() {
+    $("modal").hidden = false;
+    $("spkList").innerHTML = `<div class="empty">Загружаю…</div>`;
+    msg("");
+    try {
+      const r = await fetch("/api/speakers?src=" + encodeURIComponent(src));
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      renderSpeakers(d);
+    } catch (e) {
+      $("spkList").innerHTML = "";
+      msg(`не вышло получить список: ${e.message}. Сервер запущен через ./run.sh serve?`, true);
+    }
+  }
+
+  async function saveSpeakers() {
+    const names = {};
+    $("spkList").querySelectorAll("input[data-id]").forEach(i => names[i.dataset.id] = i.value.trim());
+    if (!Object.values(names).some(Boolean)) return msg("не вписано ни одного имени", true);
+
+    $("spkSave").disabled = true;
+    msg("сохраняю…");
+    try {
+      const r = await fetch("/api/speakers", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ src, names }),
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+
+      const fresh = await get("timeline.json");     // подтягиваем то, что реально записалось
+      transcript = fresh.transcript || [];
+      renderList();
+      renderSpeakers(d.roster || { speakers: [] });
+      msg(`готово: имена у ${d.named_segments} из ${d.total_segments} реплик` +
+          (d.unnamed?.length ? `, без имени ${d.unnamed.join(", ")}` : ""));
+    } catch (e) {
+      msg(`не сохранилось: ${e.message}`, true);
+    } finally {
+      $("spkSave").disabled = false;
+    }
+  }
+
+  async function boot() {
+    try {
+      tl = await get("timeline.json");
+    } catch (e) {
+      return die(`Не читается <code>${esc(src)}timeline.json</code> — ${esc(e.message)}.<br><br>
+        Открой страницу как <code>?src=/videro-out/&lt;папка&gt;/</code>, отдавая файлы по HTTP
+        (например <code>./run.sh serve</code>). Из <code>file://</code> fetch работать не будет.`);
+    }
+    scenes = tl.scenes || [];
+    highlights = tl.highlights || [];
+    transcript = tl.transcript || [];
+    chapters = tl.chapters || [];
+
+    // главы появляются только после chapters.py; без него честно показываем сцены
+    if (!chapters.length) {
+      chapters = scenes.map(s => ({ start: s.start, end: s.end, title: s.caption || s.topic || "—",
+                                    summary: "главы не собраны — прогони scripts/chapters.py" }));
+    }
+
+    let meta = {};
+    try { meta = await get("meta.json"); } catch { /* необязательный файл */ }
+    const name = decodeURIComponent(src.replace(/\/$/, "").split("/").pop()) || "видео";
+    document.title = (meta.title || name) + " — Videro";
+    $("title").textContent = meta.title || name;
+    $("desc").textContent = meta.description || "";
+
+    $("app").hidden = false;
+    renderChips();
+    renderStrip();
+    renderList();
+
+    // постер и субтитры — опциональны, отсутствие не должно ронять страницу
+    fetch(src + "poster.jpg", { method: "HEAD" })
+      .then(r => { if (r.ok) video.poster = src + "poster.jpg"; }).catch(() => {});
+    get("subtitles.srt", "text").then(srt => {
+      if (!srt.trim()) return;
+      const tr = document.createElement("track");
+      tr.kind = "subtitles"; tr.label = "Субтитры"; tr.srclang = "ru"; tr.default = true;
+      tr.src = URL.createObjectURL(new Blob([srtToVtt(srt)], { type: "text/vtt" }));
+      video.appendChild(tr);
+    }).catch(() => {});
+
+    // HLS если он есть, иначе исходный video.mp4 рядом с прогоном (--no-hls)
+    const m3u8 = src + "hls/master.m3u8";
+    const head = async u => { try { return (await fetch(u, { method: "HEAD" })).ok; } catch { return false; } };
+
+    if (await head(m3u8)) {
+      if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = m3u8;                     // Safari умеет HLS сам
+      } else if (window.Hls?.isSupported()) {
+        const hls = new Hls({ maxBufferLength: 30 });
+        hls.loadSource(m3u8);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) console.error("hls:", d.type, d.details); });
+      } else {
+        die("Браузер не умеет ни нативный HLS, ни hls.js.");
+      }
+    } else if (await head(src + "video.mp4")) {
+      video.src = src + "video.mp4";
+    } else {
+      die(`Видео не найдено: нет ни <code>hls/master.m3u8</code>, ни <code>video.mp4</code>
+           в <code>${esc(src)}</code>.<br><br>Положи рядом с прогоном исходник под именем
+           <code>video.mp4</code> (годится симлинк) или прогони транскод без <code>--no-hls</code>.`);
+    }
+
+    // кнопка нужна только когда диаризация уже прошла
+    if (transcript.some(s => s.speaker)) {
+      $("nameBtn").hidden = false;
+      $("nameBtn").onclick = openSpeakers;
+      $("spkSave").onclick = saveSpeakers;
+      $("spkCancel").onclick = () => { $("modal").hidden = true; };
+      $("modal").onclick = e => { if (e.target === $("modal")) $("modal").hidden = true; };
+
+      const syncPlayBtn = () => { $("spkPlay").textContent = video.paused ? "▶" : "⏸"; };
+      const toggle = () => { video.paused ? video.play().catch(() => {}) : video.pause(); };
+      $("spkPlay").onclick = toggle;
+      video.addEventListener("play", syncPlayBtn);
+      video.addEventListener("pause", syncPlayBtn);
+      syncPlayBtn();
+
+      document.addEventListener("keydown", e => {
+        if ($("modal").hidden) return;
+        if (e.key === "Escape") { $("modal").hidden = true; return; }
+        // пробел ставит на паузу, но не когда набирают имя
+        if (e.code === "Space" && e.target.tagName !== "INPUT") { e.preventDefault(); toggle(); }
+      });
+    }
+
+    video.addEventListener("timeupdate", onTime);
+    video.addEventListener("seeked", onTime);
+    document.querySelectorAll('[role="tab"]').forEach(b => b.onclick = () => {
+      document.querySelectorAll('[role="tab"]').forEach(x =>
+        x.setAttribute("aria-selected", String(x === b)));
+      tab = b.dataset.tab;
+      renderList();
+    });
+    onTime();
+  }
+
+  boot();
+})();
+</script>
+</body>
+</html>
