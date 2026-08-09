@@ -17,18 +17,37 @@ from __future__ import annotations
 import os
 
 MODEL = os.getenv("WHISPER_MODEL", "mlx-community/whisper-large-v3-mlx")
+GLOSSARY = os.getenv("GLOSSARY", os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "glossary.txt"))
 
 
-def transcribe(audio_path: str, lang: str) -> list[dict]:
+def load_glossary(path: str = "") -> str:
+    """Термины из файла → строка для initial_prompt.
+
+    Whisper смещает вероятности декодера в сторону слов из промпта, поэтому
+    русская речь с английскими терминами перестаёт превращаться в «харнесс».
+    После распознавания это уже не восстановить, так что список нужен здесь.
+    """
+    path = path or GLOSSARY
+    if not os.path.isfile(path):
+        return ""
+    terms = [ln.strip() for ln in open(path, encoding="utf-8")
+             if ln.strip() and not ln.startswith("#")]
+    return ", ".join(terms) if terms else ""
+
+
+def transcribe(audio_path: str, lang: str, glossary: str = "") -> list[dict]:
     """Аудио → сегменты [{start, end, text, speaker}]. Сигнатура как у SpeechCore-версии."""
     import mlx_whisper
 
+    prompt = glossary if glossary else load_glossary()
     res = mlx_whisper.transcribe(
         audio_path,
         path_or_hf_repo=MODEL,
         language=lang or None,          # пусто → whisper определит язык сам
         verbose=True if os.getenv("WHISPER_MLX_VERBOSE") else None,
         condition_on_previous_text=False,   # иначе whisper зацикливается на длинных паузах
+        initial_prompt=prompt or None,
     )
     out = []
     for seg in res.get("segments", []):
@@ -51,11 +70,16 @@ if __name__ == "__main__":
     ap.add_argument("media", help="аудио или видео (что читает ffmpeg)")
     ap.add_argument("--lang", default="", help="язык речи; пусто — автоопределение")
     ap.add_argument("--json", default=None, help="куда сложить сегменты (по умолчанию только сводка)")
+    ap.add_argument("--glossary", default=None,
+                    help="файл терминов (по умолчанию glossary.txt в корне; "
+                         "'-' чтобы прогнать без него)")
     args = ap.parse_args()
 
+    gl = "" if args.glossary == "-" else load_glossary(args.glossary or "")
     print(f"▶ {MODEL}\n  {args.media}")
+    print(f"  глоссарий: {len(gl.split(', ')) if gl else 0} терминов")
     t0 = time.time()
-    segs = transcribe(args.media, args.lang)
+    segs = transcribe(args.media, args.lang, gl)
     dt = time.time() - t0
     span = segs[-1]["end"] if segs else 0
     print(f"\n✔ {len(segs)} сегментов за {dt:.0f}s "

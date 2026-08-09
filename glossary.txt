@@ -1,0 +1,50 @@
+# Термины, которые whisper обязан писать правильно.
+# Уходят в initial_prompt на этапе распознавания и в проход нормализации.
+# Одна строка — один термин. Пустые строки и # игнорируются.
+#
+# Смысл: русская речь с английскими терминами распознаётся на слух и пишется
+# кириллицей («харнесс» вместо harness). После распознавания это уже не чинится
+# надёжно — информация потеряна. Поэтому список нужен ДО, а не после.
+
+Claude
+Claude Code
+CLAUDE.md
+Anthropic
+harness
+MCP
+subagent
+skill
+prompt
+context
+LLM
+Jira
+Confluence
+Atlassian
+VS Code
+Visual Studio Code
+GitHub
+ComfyUI
+LoRA
+Docs as Code
+SDD
+CLI
+IDE
+API
+token
+workflow
+pipeline
+commit
+repository
+terminal
+extension
+plugin
+Python
+Node.js
+Docker
+JSON
+Markdown
+workshop
+AI
+agent
+chat
+script

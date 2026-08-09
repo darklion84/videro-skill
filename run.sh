@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Обёртка: скрипты videro читают только os.getenv и сами .env не подхватывают.
+#   ./run.sh all видео.mp4              → ВСЁ по порядку: разметка, термины, спикеры, главы
 #   ./run.sh видео.mp4 [флаги]              → разметка, ASR через SpeechCore (scripts/videro.py)
 #   ./run.sh local видео.mp4 [флаги]        → то же, но ASR локальным whisper (scripts/videro_local.py)
 #   ./run.sh asr видео.mp4 --lang en        → только распознавание речи (scripts/asr_local.py)
@@ -26,6 +27,8 @@ case "${1:-}" in
   diarize)             script=diarize.py; shift ;;
   speakers)            script=speakers.py; shift ;;
   redact)              script=redact.py; shift ;;
+  normalize)           script=normalize.py; shift ;;
+  all)                 script=pipeline.py; shift ;;
 esac
 
 if [ "$script" = videro.py ] && [ -z "${SPEECHCORE_TOKEN:-}" ]; then
