@@ -19,6 +19,7 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import zipfile
 
@@ -68,6 +69,30 @@ Linux   — ./start-linux.sh
 """
 
 
+def make_hls(src: str, dst_dir: str, bitrate: str, preset: str = "medium") -> None:
+    """Одна дорожка 720p сегментами по 6 секунд.
+
+    Своя команда, а не transcode.py апстрима: там лесенка из трёх качеств, и аудио
+    дублируется в каждое. На записи экрана это давало архив ТЯЖЕЛЕЕ исходника —
+    590 МБ превращались в 640. Одна дорожка и tune=stillimage под текст на экране
+    дают примерно половину веса при неотличимой на глаз картинке.
+    """
+    hls = os.path.join(dst_dir, "hls")
+    os.makedirs(hls, exist_ok=True)
+    buf = f"{int(bitrate.rstrip('k')) * 2}k"
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-y", "-i", src,
+        "-vf", "scale=1280:-2", "-c:v", "libx264", "-preset", preset,
+        "-tune", "stillimage", "-b:v", bitrate, "-maxrate", bitrate, "-bufsize", buf,
+        "-g", "48", "-keyint_min", "48", "-sc_threshold", "0",
+        "-c:a", "aac", "-b:a", "96k", "-ac", "2",
+        "-f", "hls", "-hls_time", "6", "-hls_playlist_type", "vod",
+        "-hls_flags", "independent_segments",
+        "-hls_segment_filename", os.path.join(hls, "seg%04d.ts"),
+        os.path.join(hls, "master.m3u8"),
+    ], check=True)
+
+
 def human(n: int) -> str:
     for unit in ("Б", "КБ", "МБ", "ГБ"):
         if n < 1024 or unit == "ГБ":
@@ -80,6 +105,11 @@ def main():
     ap.add_argument("name", help="имя папки в videro-out")
     ap.add_argument("--out", default=None, help="куда положить (по умолчанию рядом, в videro-out)")
     ap.add_argument("--no-zip", action="store_true", help="оставить папкой, не жать в zip")
+    ap.add_argument("--hls", action="store_true",
+                    help="пережать видео в HLS под скринкаст: примерно вдвое легче, "
+                         "и сегментами по паре МБ вместо одного большого файла")
+    ap.add_argument("--bitrate", default="350k",
+                    help="видеобитрейт 720p при --hls (default 350k)")
     args = ap.parse_args()
 
     src_dir = os.path.join(ROOT, "videro-out", args.name)
@@ -103,16 +133,29 @@ def main():
 
     print(f"▶ собираю {pkg}")
 
-    # разметка и медиа. Копируем по содержимому: video.mp4 у нас симлинк на исходник
-    for fn in ("timeline.json", "subtitles.srt", "poster.jpg", "video.mp4"):
+    # разметка. Копируем по содержимому: video.mp4 у нас симлинк на исходник
+    for fn in ("timeline.json", "subtitles.srt", "poster.jpg"):
         p = os.path.join(src_dir, fn)
         if os.path.exists(p):
             shutil.copy(p, os.path.join(data, fn))
             print(f"    {fn:16s} {human(os.path.getsize(p))}")
-    hls = os.path.join(src_dir, "hls")
-    if os.path.isdir(hls):
-        shutil.copytree(hls, os.path.join(data, "hls"))
-        print("    hls/")
+
+    # видео: готовый HLS → своё пережатие → исходный файл. Плеер понимает и то и другое
+    hls_src = os.path.join(src_dir, "hls")
+    video = os.path.join(src_dir, "video.mp4")
+    if os.path.isdir(hls_src):
+        shutil.copytree(hls_src, os.path.join(data, "hls"))
+        print("    hls/            (готовый, из прогона)")
+    elif args.hls and os.path.exists(video):
+        print(f"    пережимаю в HLS, 720p {args.bitrate} (~20× реалтайма)…", flush=True)
+        make_hls(os.path.realpath(video), data, args.bitrate)
+        seg = sum(os.path.getsize(os.path.join(d, x))
+                  for d, _, fs in os.walk(os.path.join(data, "hls")) for x in fs)
+        was = os.path.getsize(os.path.realpath(video))
+        print(f"    hls/            {human(seg)} вместо {human(was)}")
+    elif os.path.exists(video):
+        shutil.copy(video, os.path.join(data, "video.mp4"))
+        print(f"    video.mp4       {human(os.path.getsize(video))}")
 
     # в архиве нечем сохранять имена спикеров — прячем кнопку
     meta["viewonly"] = True
