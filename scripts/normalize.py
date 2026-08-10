@@ -39,6 +39,9 @@ MODEL = os.getenv("NDT_NORMALIZE_MODEL", os.getenv("NDT_VISION_MODEL", "qwen3.6-
 WORKERS = int(os.getenv("ANALYZE_WORKERS", "4"))
 BATCH = int(os.getenv("NORMALIZE_BATCH", "25"))
 
+# куда прячется оригинал, чтобы правка оставалась обратимой
+ORIG = {"text": "text_asr", "caption": "caption_raw", "action": "action_raw"}
+
 SCHEMA = {"type": "json_schema", "json_schema": {"name": "Normalized", "strict": True, "schema": {
     "type": "object", "additionalProperties": False,
     "properties": {"fixed": {"type": "array", "items": {"type": "string"}}},
@@ -52,11 +55,15 @@ def accept(old: str, new: str, terms_lower: list[str]) -> bool:
     Просить её этого не делать бесполезно, а проверить механически — легко.
     """
     ow, nw = old.split(), new.split()
-    for op, _, _, j1, j2 in difflib.SequenceMatcher(None, ow, nw).get_opcodes():
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, ow, nw).get_opcodes():
         if op == "equal":
             continue
-        span = " ".join(nw[j1:j2]).lower()
-        if not any(t in span for t in terms_lower):
+        was, now = " ".join(ow[i1:i2]), " ".join(nw[j1:j2])
+        # правка регистра внутри идентификатора: имя папки confluence_access
+        # превращалось в Confluence_access, потому что Confluence есть в словаре
+        if was.lower() == now.lower() and re.search(r"[\w.-]*[_/\\][\w.-]*", was):
+            return False
+        if not any(t in now.lower() for t in terms_lower):
             return False
     return True
 
@@ -111,6 +118,8 @@ def main():
     ap.add_argument("timeline")
     ap.add_argument("--glossary", default=None)
     ap.add_argument("--dry-run", action="store_true", help="показать правки, ничего не писать")
+    ap.add_argument("--no-scenes", action="store_true",
+                    help="править только реплики, не трогать описания сцен")
     args = ap.parse_args()
 
     if not NDT_KEY:
@@ -126,14 +135,26 @@ def main():
     if not tr:
         sys.exit("пустой transcript")
 
-    batches = [(i, tr[i:i + BATCH]) for i in range(0, len(tr), BATCH)]
-    print(f"▶ {len(tr)} реплик, {len(terms.split(', '))} терминов, "
+    # Реплики и описания сцен правятся одним и тем же механизмом. Описания сцен
+    # генерирует vision-модель ещё до нормализации, поэтому кириллические кальки
+    # доживают в caption/action и потом всплывают в названиях глав.
+    items: list[tuple[dict, str, float]] = [(s, "text", s["start"]) for s in tr]
+    if not args.no_scenes:
+        for sc in tl.get("scenes") or []:
+            for field in ("caption", "action"):
+                if (sc.get(field) or "").strip():
+                    items.append((sc, field, sc["start"]))
+
+    texts = [obj[field] for obj, field, _ in items]
+    batches = [(i, texts[i:i + BATCH]) for i in range(0, len(texts), BATCH)]
+    n_sc = len(items) - len(tr)
+    print(f"▶ {len(tr)} реплик" + (f" + {n_sc} описаний сцен" if n_sc else "") +
+          f", {len(terms.split(', '))} терминов, "
           f"{len(batches)} батчей по {BATCH}\n  модель: {MODEL}")
 
     def do(b):
-        i, segs = b
-        fixed = call(build_prompt(terms, [s["text"] for s in segs]), len(segs))
-        return i, fixed
+        i, chunk = b
+        return i, call(build_prompt(terms, chunk), len(chunk))
 
     terms_lower = [t.strip().lower() for t in terms.split(", ") if t.strip()]
     changes, rejected = [], []
@@ -142,30 +163,31 @@ def main():
             if fixed is None:
                 continue
             for k, new in enumerate(fixed):
-                seg = tr[i + k]
-                if new != seg["text"] and not accept(seg["text"], new, terms_lower):
-                    rejected.append((seg["start"], seg["text"], new))
+                obj, field, start = items[i + k]
+                old = obj[field]
+                if new == old:
                     continue
-                if new != seg["text"]:
-                    changes.append((seg["start"], seg["text"], new))
-                    if not args.dry_run:
-                        seg.setdefault("text_asr", seg["text"])   # что было до нормализации
-                        seg["text"] = new
+                if not accept(old, new, terms_lower):
+                    rejected.append((start, field, old, new))
+                    continue
+                changes.append((start, field, old, new))
+                if not args.dry_run:
+                    obj.setdefault(ORIG[field], old)      # что было до нормализации
+                    obj[field] = new
 
-    print(f"\n{'нашлось' if args.dry_run else 'исправлено'} реплик: {len(changes)} из {len(tr)}")
-    for st, old, new in changes[:25]:
-        m, s = divmod(int(st), 60)
-        print(f"  {m}:{s:02d}\n     было:  {old[:92]}\n     стало: {new[:92]}")
-    if len(changes) > 25:
-        print(f"  … ещё {len(changes) - 25}")
+    def show(rows, limit, verb):
+        for st, field, old, new in rows[:limit]:
+            m, s = divmod(int(st), 60)
+            where = "" if field == "text" else f" [{field} сцены]"
+            print(f"  {m}:{s:02d}{where}\n     было:  {old[:92]}\n     {verb} {new[:92]}")
+        if len(rows) > limit:
+            print(f"  … ещё {len(rows) - limit}")
 
+    print(f"\n{'нашлось' if args.dry_run else 'исправлено'}: {len(changes)} из {len(items)}")
+    show(changes, 25, "стало: ")
     if rejected:
         print(f"\nотклонено фильтром: {len(rejected)} (правка трогала не термины из словаря)")
-        for st, old, new in rejected[:8]:
-            m, s = divmod(int(st), 60)
-            print(f"  {m}:{s:02d}\n     было:  {old[:92]}\n     хотели:{new[:92]}")
-        if len(rejected) > 8:
-            print(f"  … ещё {len(rejected) - 8}")
+        show(rejected, 8, "хотели:")
 
     if args.dry_run or not changes:
         if args.dry_run:
