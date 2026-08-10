@@ -24,6 +24,7 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
 ROOT = os.path.dirname(HERE)
 PY = sys.executable
 
@@ -69,7 +70,9 @@ def main():
     ap.add_argument("--title", default=None, help="заголовок на странице плеера")
     ap.add_argument("--lang", default="ru", help="язык речи (default ru)")
     ap.add_argument("--hls", action="store_true",
-                    help="сделать HLS-транскод; по умолчанию играем исходный файл")
+                    help="сделать HLS: примерно вдвое легче исходника и сегментами "
+                         "по паре МБ; по умолчанию играем исходный файл как есть")
+    ap.add_argument("--bitrate", default="350k", help="битрейт 720p при --hls (default 350k)")
     ap.add_argument("--serve", action="store_true", help="поднять плеер в конце")
     ap.add_argument("--port", default="8777")
     ap.add_argument("--force", action="store_true", help="переделать все шаги заново")
@@ -111,10 +114,9 @@ def main():
 
     # ── шаги ─────────────────────────────────────────────────────────────────
     if step("разметка: whisper + сцены (самый долгий шаг)", st["analyzed"], args.force):
-        a = [src, "--lang", args.lang, "--out", out]
-        if not args.hls:
-            a.append("--no-hls")
-        run("videro_local.py", *a)
+        # всегда --no-hls: лесенка апстрима на записи экрана даёт файл тяжелее
+        # исходника, свой HLS делаем ниже одной дорожкой
+        run("videro_local.py", src, "--lang", args.lang, "--out", out, "--no-hls")
 
     if step("нормализация терминов по glossary.txt", st["normalized"], args.force):
         run("normalize.py", tl_path)
@@ -124,6 +126,13 @@ def main():
 
     if step("главы и хайлайты", st["chaptered"], args.force):
         run("chapters.py", tl_path)
+
+    if args.hls and not os.path.isdir(os.path.join(out, "hls")):
+        print(f"\n{'─' * 62}\n▶ HLS, 720p {args.bitrate}\n{'─' * 62}", flush=True)
+        from hlsmake import dir_size, make_hls
+        make_hls(os.path.realpath(link if os.path.exists(link) else src), out, args.bitrate)
+        print(f"  {dir_size(os.path.join(out, 'hls')) / 1024 / 1024:.0f} МБ "
+              f"вместо {os.path.getsize(src) / 1024 / 1024:.0f} МБ")
 
     print(f"\n{'─' * 62}\n▶ проверка на секреты\n{'─' * 62}", flush=True)
     run("redact.py", tl_path, "--ocr", "--dry-run")

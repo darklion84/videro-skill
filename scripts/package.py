@@ -19,9 +19,11 @@ import json
 import os
 import shutil
 import stat
-import subprocess
 import sys
 import zipfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hlsmake import dir_size, make_hls  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MEDIA_EXT = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".jpg", ".jpeg", ".png", ".ts"}
@@ -67,30 +69,6 @@ Linux   — ./start-linux.sh
 Тумблер «Синхронизация с видео» листает транскрипт за воспроизведением.
 Субтитры включаются в меню плеера.
 """
-
-
-def make_hls(src: str, dst_dir: str, bitrate: str, preset: str = "medium") -> None:
-    """Одна дорожка 720p сегментами по 6 секунд.
-
-    Своя команда, а не transcode.py апстрима: там лесенка из трёх качеств, и аудио
-    дублируется в каждое. На записи экрана это давало архив ТЯЖЕЛЕЕ исходника —
-    590 МБ превращались в 640. Одна дорожка и tune=stillimage под текст на экране
-    дают примерно половину веса при неотличимой на глаз картинке.
-    """
-    hls = os.path.join(dst_dir, "hls")
-    os.makedirs(hls, exist_ok=True)
-    buf = f"{int(bitrate.rstrip('k')) * 2}k"
-    subprocess.run([
-        "ffmpeg", "-v", "error", "-y", "-i", src,
-        "-vf", "scale=1280:-2", "-c:v", "libx264", "-preset", preset,
-        "-tune", "stillimage", "-b:v", bitrate, "-maxrate", bitrate, "-bufsize", buf,
-        "-g", "48", "-keyint_min", "48", "-sc_threshold", "0",
-        "-c:a", "aac", "-b:a", "96k", "-ac", "2",
-        "-f", "hls", "-hls_time", "6", "-hls_playlist_type", "vod",
-        "-hls_flags", "independent_segments",
-        "-hls_segment_filename", os.path.join(hls, "seg%04d.ts"),
-        os.path.join(hls, "master.m3u8"),
-    ], check=True)
 
 
 def human(n: int) -> str:
@@ -149,8 +127,7 @@ def main():
     elif args.hls and os.path.exists(video):
         print(f"    пережимаю в HLS, 720p {args.bitrate} (~20× реалтайма)…", flush=True)
         make_hls(os.path.realpath(video), data, args.bitrate)
-        seg = sum(os.path.getsize(os.path.join(d, x))
-                  for d, _, fs in os.walk(os.path.join(data, "hls")) for x in fs)
+        seg = dir_size(os.path.join(data, "hls"))
         was = os.path.getsize(os.path.realpath(video))
         print(f"    hls/            {human(seg)} вместо {human(was)}")
     elif os.path.exists(video):

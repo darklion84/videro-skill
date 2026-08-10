@@ -32,7 +32,10 @@ NDT_BASE = (os.getenv("ND_BASE_URL", "https://api.neuraldeep.ru/v1")).rstrip("/"
 NDT_KEY = os.getenv("NEURALDEEP_API_KEY", "")
 MODEL = os.getenv("NDT_CHAPTERS_MODEL", os.getenv("NDT_ASK_MODEL",
                   os.getenv("NDT_VISION_MODEL", "qwen3.6-fp8")))
-OCR_CAP = int(os.getenv("CHAPTERS_OCR_CAP", "200"))
+# 450, а не 200: на лекции лимит 200 резал 63% сцен и терял 48% текста с экрана
+# (медиана длины OCR — 245 символов). При 450 теряется 20%, промпт растёт
+# всего на ~5 тыс. символов на запрос
+OCR_CAP = int(os.getenv("CHAPTERS_OCR_CAP", "450"))
 # 450, а не меньше: на 260 фраза рубится посередине, и глава про десктопное приложение
 # получила название про VS Code — модель цеплялась за единственное уцелевшее имя продукта
 SPEECH_CAP = int(os.getenv("CHAPTERS_SPEECH_CAP", "450"))
