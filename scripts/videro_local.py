@@ -20,11 +20,19 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import analyze          # noqa: E402
-import asr_local        # noqa: E402
 import hub_retry        # noqa: E402
 import redact           # noqa: E402
 
-analyze.transcribe = asr_local.transcribe
+# parakeet по умолчанию: на лекции он вышел в 5.3 раза быстрее и не терял куски
+# речи, которые whisper схлопывал. whisper остаётся ради языков вне тех 25,
+# что знает parakeet — ASR_BACKEND=whisper
+BACKEND = os.getenv("ASR_BACKEND", "parakeet").lower()
+if BACKEND == "whisper":
+    import asr_local as asr      # noqa: E402
+else:
+    import asr_parakeet as asr   # noqa: E402
+
+analyze.transcribe = asr.transcribe
 hub_retry.apply(analyze)
 
 
@@ -57,5 +65,5 @@ analyze.analyze = _analyze_and_redact
 import videro           # noqa: E402
 
 if __name__ == "__main__":
-    print(f"ASR: локальный whisper ({asr_local.MODEL}), диаризации нет")
+    print(f"ASR: {BACKEND} ({asr.MODEL}), диаризации нет — её кладёт diarize.py")
     videro.main()
