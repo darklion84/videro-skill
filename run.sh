@@ -30,6 +30,7 @@ case "${1:-}" in
   normalize)           script=normalize.py; shift ;;
   all)                 script=pipeline.py; shift ;;
   package)             script=package.py; shift ;;
+  test)                exec .venv/bin/python -m unittest discover -s tests -v ;;
 esac
 
 if [ "$script" = videro.py ] && [ -z "${SPEECHCORE_TOKEN:-}" ]; then

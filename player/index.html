@@ -346,7 +346,7 @@
       <div class="spk">
         <div class="spk-top">
           <span class="id mono">${esc(s.id)}</span>
-          <input data-id="${esc(s.id)}" value="${esc(s.name || "")}" placeholder="имя — например, Лектор">
+          <input data-id="${esc(s.id)}" data-saved="${esc(s.name || "")}" value="${esc(s.name || "")}" placeholder="имя — например, Лектор">
           <span class="stat">${(s.talk_sec / 60).toFixed(1)} мин · ${(s.share * 100).toFixed(0)}% · ${s.turns} реплик</span>
         </div>
         ${(s.samples || []).map(m => `
@@ -394,7 +394,7 @@
       const fresh = await get("timeline.json");     // подтягиваем то, что реально записалось
       transcript = fresh.transcript || [];
       renderList();
-      renderSpeakers(d.roster || { speakers: [] });
+      renderSpeakers(d.roster || { speakers: [] });   // перерисовка обновляет data-saved
       msg(`готово: имена у ${d.named_segments} из ${d.total_segments} реплик` +
           (d.unnamed?.length ? `, без имени ${d.unnamed.join(", ")}` : ""));
     } catch (e) {
@@ -475,19 +475,29 @@
       $("nameBtn").hidden = false;
       $("nameBtn").onclick = openSpeakers;
       $("spkSave").onclick = saveSpeakers;
-      $("spkCancel").onclick = () => { $("modal").hidden = true; };
-      $("modal").onclick = e => { if (e.target === $("modal")) $("modal").hidden = true; };
+      // клик мимо окна раньше закрывал модалку и терял невписанные имена —
+      // подложка больше не реагирует, а осознанное закрытие переспрашивает
+      const dirty = () => [...$("spkList").querySelectorAll("input[data-id]")]
+        .some(i => i.value.trim() !== (i.dataset.saved || ""));
+      const tryClose = () => {
+        if (dirty() && !confirm("Имена не сохранены и потеряются. Закрыть окно?")) return;
+        $("modal").hidden = true;
+      };
+      $("spkCancel").onclick = tryClose;
 
       const syncPlayBtn = () => { $("spkPlay").textContent = video.paused ? "▶" : "⏸"; };
       const toggle = () => { video.paused ? video.play().catch(() => {}) : video.pause(); };
       $("spkPlay").onclick = toggle;
+      window.addEventListener("beforeunload", e => {
+        if (!$("modal").hidden && dirty()) { e.preventDefault(); e.returnValue = ""; }
+      });
       video.addEventListener("play", syncPlayBtn);
       video.addEventListener("pause", syncPlayBtn);
       syncPlayBtn();
 
       document.addEventListener("keydown", e => {
         if ($("modal").hidden) return;
-        if (e.key === "Escape") { $("modal").hidden = true; return; }
+        if (e.key === "Escape") { tryClose(); return; }
         // пробел ставит на паузу, но не когда набирают имя
         if (e.code === "Space" && e.target.tagName !== "INPUT") { e.preventDefault(); toggle(); }
       });

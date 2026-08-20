@@ -19,6 +19,7 @@ import chapters      # noqa: E402
 import diarize       # noqa: E402
 import normalize     # noqa: E402
 import redact        # noqa: E402
+import scene_cache   # noqa: E402
 import speakers      # noqa: E402
 
 TERMS = ["claude", "jira", "confluence", "harness", "skill", "vs code", "llm"]
@@ -211,6 +212,38 @@ class TestDiarizeStamp(unittest.TestCase):
         tr = [{"start": 0.0, "end": 5.0, "text": "a"}]
         self.assertEqual(diarize.stamp(tr, [{"start": 90.0, "end": 99.0, "speaker": "A"}]), 0)
         self.assertIsNone(tr[0]["speaker"])
+
+
+class TestSceneCache(unittest.TestCase):
+    """Кэш дорогих vision-вызовов: на Lecture 2 обрыв процесса сжёг 273 вызова."""
+
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.mkdtemp()
+        self.p = os.path.join(self.dir, "scenes.jsonl")
+
+    def test_roundtrip(self):
+        scene_cache.load(self.p)
+        scene_cache.put(scene_cache.key(0.0, 30.0, "m"), {"caption": "первая"})
+        self.assertEqual(scene_cache.load(self.p), 1)
+        self.assertEqual(scene_cache.get(scene_cache.key(0.0, 30.0, "m"))["caption"], "первая")
+
+    def test_key_includes_model(self):
+        self.assertNotEqual(scene_cache.key(0.0, 30.0, "a"), scene_cache.key(0.0, 30.0, "b"))
+
+    def test_survives_truncated_last_line(self):
+        # процесс убит на середине записи — читаем что успело лечь
+        scene_cache.load(self.p)
+        scene_cache.put(scene_cache.key(0.0, 1.0, "m"), {"caption": "целая"})
+        with open(self.p, "a", encoding="utf-8") as f:
+            f.write('{"k": "оборван')
+        self.assertEqual(scene_cache.load(self.p), 1)
+
+    def test_stats_split_cached_and_new(self):
+        scene_cache.load(self.p)
+        scene_cache.put(scene_cache.key(0.0, 1.0, "m"), {"caption": "a"})
+        scene_cache.load(self.p)                       # второй прогон
+        self.assertEqual(scene_cache.stats(), (1, 0))
 
 
 if __name__ == "__main__":

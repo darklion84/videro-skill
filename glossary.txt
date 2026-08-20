@@ -14,7 +14,6 @@ harness
 MCP
 subagent
 skill
-prompt
 context
 LLM
 Jira
@@ -30,7 +29,6 @@ SDD
 CLI
 IDE
 API
-token
 workflow
 pipeline
 commit
@@ -45,6 +43,10 @@ JSON
 Markdown
 workshop
 AI
-agent
 chat
 script
+
+
+# намеренно НЕ включены: prompt, token, agent, chat — эти слова прижились
+# в русской речи, и латиница посреди фразы читается хуже кальки.
+# В отличие от harness или Claude, где калька реально мешает.
